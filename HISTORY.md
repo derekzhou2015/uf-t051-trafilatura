@@ -4,6 +4,7 @@
 ## Unreleased
 
 Major changes:
+- Tables without a header row now serialize as valid Markdown tables: the serializer infers the `|---|` separator after the first row when no cell is annotated `role="head"`, so all-`<td>` data tables no longer collapse into plain text lines downstream
 - Built-in jusText-derived fallback without stopwords, keeps links, formatting and images. Breaking: jusText dependency dropped, `try_justext()` takes `options` instead of `target_language`, `settings.JUSTEXT_LANGUAGES`, `external.jt_stoplist_init()` and `external.get_stoplist()` removed, by @adbar
 - Fallback cascade: tree cleaning undone in all modes, jusText tried before the recall retry, by @adbar
 - CLI fixes: exit codes, argument checks, input lists and link discovery, by @adbar

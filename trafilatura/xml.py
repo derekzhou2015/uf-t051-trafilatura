@@ -709,6 +709,26 @@ def replace_element_text(element: _Element, include_formatting: bool, in_cell: b
     return elem_text
 
 
+def _needs_inferred_separator(row: _Element) -> bool:
+    """First row of a table without any head-annotated row: a Markdown table is only
+    valid with a header separator, so this layer promotes the first row when the
+    annotation layer found no semantic header (contract: role="head" marks source
+    headers; the serializer guarantees a renderable table either way)."""
+    table = row.getparent()
+    if table is None or table.tag != "table":
+        return False
+    prev = row.getprevious()
+    while prev is not None:
+        if prev.tag == "row":
+            return False
+        prev = prev.getprevious()
+    return all(
+        cell.get("role") != "head"
+        for tablerow in table.findall("row")
+        for cell in tablerow.findall("cell")
+    )
+
+
 def _append_spaced(returnlist: list[str], text: str) -> None:
     "Append text, dropping a leading space after a separator."
     if text[:1] == " " and _last_char(returnlist) in SEPARATORS:
@@ -824,7 +844,7 @@ def process_element(
             if tag == "row":
                 cells = element.findall("cell")
                 # rows are materialized to full width upstream; draw the head separator below
-                if any(cell.get("role") == "head" for cell in cells):
+                if any(cell.get("role") == "head" for cell in cells) or _needs_inferred_separator(element):
                     returnlist.append(f"\n|{'---|' * len(cells)}\n")
             # block elements inside a cell must not inject a row-breaking newline,
             # a leading line break in an item must not split the marker from the text

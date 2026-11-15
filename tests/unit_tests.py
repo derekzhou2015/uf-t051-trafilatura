@@ -2773,8 +2773,8 @@ def test_basic_cleaning_cookie_banner_scope():
 def test_cell_context_follows_real_ancestry():
     "Cell handling must follow real ancestry, not 'a cell exists somewhere' (#767)."
     tree = etree.fromstring("<body><table><row><cell><p>inside</p></cell></row></table><p>outside</p></body>")
-    assert xml.xmltotxt(tree, include_formatting=True) == "| inside | \n\noutside\n"
-    assert xml.xmltotxt(tree, include_formatting=False) == "| inside | \noutside"
+    assert xml.xmltotxt(tree, include_formatting=True) == "| inside | \n|---|\n\noutside\n"
+    assert xml.xmltotxt(tree, include_formatting=False) == "| inside | \n|---|\noutside"
 
 
 _COLSPAN_CONTENT_BASE = "<tr><td>a</td><td>b</td><td>c</td></tr>"
@@ -2784,8 +2784,8 @@ _COLSPAN_CONTENT_ROW = "<tr><td>a</td><td colspan='2'><p>b</p><p>c</p></td></tr>
 @pytest.mark.parametrize(
     "rows,expected",
     [
-        (1, "| a | b | c | \n| a | b c |  |"),
-        (2, "| a | b | c | \n| a | b c |  | \n| a | b c |  |"),
+        (1, "| a | b | c | \n|---|---|---|\n| a | b c |  |"),
+        (2, "| a | b | c | \n|---|---|---|\n| a | b c |  | \n| a | b c |  |"),
     ],
     ids=["one-colspan-row", "two-colspan-rows"],
 )
@@ -3010,7 +3010,7 @@ def test_table_processing():
 
     # links: this gets through (for now)
     table = '<table><tr><td><a href="link.html">a</a></td></tr></table>'
-    assert _table_txt(table) == "| a |"
+    assert _table_txt(table) == "| a | \n|---|"
 
     # link: this is filtered out
     assert _table_txt(f'<table><tr><td><a href="link.html">{"abc" * 100}</a></td></tr></table>') == ""
@@ -3054,7 +3054,7 @@ def test_table_image_in_cell(cell1, expected_cell1):
     result = extract(
         html_str, fast=True, output_format="markdown", config=ZERO_CONFIG, include_images=True, include_tables=True
     )
-    assert result == f"| a | b | c | \n| {expected_cell1} | b c | d |"
+    assert result == f"| a | b | c | \n|---|---|---|\n| {expected_cell1} | b c | d |"
 
 
 # link + bold paragraph, plus a table cell with a link/bold and an image cell — shared by the combo tests
@@ -3074,7 +3074,7 @@ def test_combined_links_formatting_images_tables():
     result = extract(_COMBO_DOC, output_format="markdown", config=ZERO_CONFIG, **_COMBO_ALL_ON)
     assert result == (
         "Intro with a [link](http://x.io/p) and **bold** word.\n\n"
-        "| h1 | h2 | \n| [**bold link**](http://x.io/c) | ![pic](http://x.io/i.jpg) |"
+        "| h1 | h2 | \n|---|---|\n| [**bold link**](http://x.io/c) | ![pic](http://x.io/i.jpg) |"
     )
 
 
@@ -3083,15 +3083,15 @@ def test_combined_links_formatting_images_tables():
     [
         (
             "include_links",
-            "Intro with a link and **bold** word.\n\n| h1 | h2 | \n| **bold link** | ![pic](http://x.io/i.jpg) |",
+            "Intro with a link and **bold** word.\n\n| h1 | h2 | \n|---|---|\n| **bold link** | ![pic](http://x.io/i.jpg) |",
         ),
         (
             "include_formatting",
-            "Intro with a [link](http://x.io/p) and bold word.\n| h1 | h2 | \n| [bold link](http://x.io/c) | ![pic](http://x.io/i.jpg) |",
+            "Intro with a [link](http://x.io/p) and bold word.\n| h1 | h2 | \n|---|---|\n| [bold link](http://x.io/c) | ![pic](http://x.io/i.jpg) |",
         ),
         (
             "include_images",
-            "Intro with a [link](http://x.io/p) and **bold** word.\n\n| h1 | h2 | \n| [**bold link**](http://x.io/c) |  |",
+            "Intro with a [link](http://x.io/p) and **bold** word.\n\n| h1 | h2 | \n|---|---|\n| [**bold link**](http://x.io/c) |  |",
         ),
         ("include_tables", "Intro with a [link](http://x.io/p) and **bold** word."),
     ],
@@ -3135,6 +3135,68 @@ def test_table_head_td_cells():
     assert result == _table_txt(table.format("<th>", "</th>"))
 
 
+@pytest.mark.parametrize(
+    "table,expected",
+    [
+        # plain all-<td> data table: separator inferred after the first row
+        (
+            "<table><tr><td>A</td><td>B</td></tr><tr><td>1</td><td>2</td></tr></table>",
+            "| A | B | \n|---|---|\n| 1 | 2 |",
+        ),
+        # single-row table still becomes a renderable (header-only) Markdown table
+        ("<table><tr><td>A</td><td>B</td></tr></table>", "| A | B | \n|---|---|"),
+        # ragged rows: the separator matches the widest row, short rows are padded
+        (
+            "<table><tr><td>A</td></tr><tr><td>1</td><td>2</td><td>3</td></tr></table>",
+            "| A |  |  | \n|---|---|---|\n| 1 | 2 | 3 |",
+        ),
+        # colspan in the first row: separator follows the materialized column count
+        (
+            "<table><tr><td colspan='2'>A</td></tr><tr><td>1</td><td>2</td></tr></table>",
+            "| A |  | \n|---|---|\n| 1 | 2 |",
+        ),
+        # rowspan in the first row: separator still drawn, placeholders keep alignment
+        (
+            "<table><tr><td rowspan='2'>A</td><td>B</td></tr><tr><td>1</td></tr></table>",
+            "| A | B | \n|---|---|\n|  | 1 |",
+        ),
+    ],
+    ids=["plain-2x2", "single-row", "ragged", "colspan-first-row", "rowspan-first-row"],
+)
+def test_table_headerless_markdown_separator(table, expected):
+    "Headerless data tables serialize as valid Markdown tables: separator after the first row, columns preserved."
+    assert _table_md(table).endswith(expected)
+    assert _table_txt(table).endswith(expected)
+
+
+def test_table_headerless_two_layer_contract():
+    "Contract closure: the annotation layer marks no head cell without a source header, "
+    "while the serializer still infers the separator — XML stays truthful, Markdown stays valid."
+    table = "<table><tr><td>A</td><td>B</td></tr><tr><td>1</td><td>2</td></tr></table>"
+    xml_result = _extract_doc(table, intro=False, fast=True, output_format="xml", include_tables=True)
+    assert 'role="head"' not in xml_result
+    assert xml_result.count("<row>") == 2
+    md_result = _table_md(table)
+    assert md_result.endswith("| A | B | \n|---|---|\n| 1 | 2 |")
+    # every row line carries the same column count, so downstream table parsers don't collapse
+    row_lines = [line for line in md_result.splitlines() if line.startswith("|")]
+    assert len({line.count("|") for line in row_lines}) == 1
+
+
+def test_table_headerless_separator_uniqueness():
+    "Exactly one separator line per table, however the rows are annotated."
+    # headerless: one inferred separator
+    assert _table_txt("<table><tr><td>a</td></tr><tr><td>b</td></tr><tr><td>c</td></tr></table>").count("|---|") == 1
+    # a <th> row further down suppresses the inference, separator lands under it alone
+    result = _table_txt("<table><tr><td>a</td></tr><tr><th>h</th></tr><tr><td>b</td></tr></table>")
+    assert result.count("|---|") == 1
+    assert result.endswith("| a | \n| h | \n|---|\n| b |")
+    # caption + headerless rows: the caption row is the head, no extra separator
+    result = _table_txt("<table><caption>Cap</caption><tr><td>a</td></tr><tr><td>b</td></tr></table>")
+    assert result.count("|---|") == 1
+
+
+
 @pytest.mark.parametrize("bad_span", ['span="2"', 'span="2.1"', 'span="-1"', 'span="abc"'])
 def test_table_bad_span_attr_treated_as_colspan1(bad_span):
     "Non-colspan span attributes are ignored (colspan=1); trailing pad fills to max_cols."
@@ -3162,7 +3224,7 @@ def test_colspan_zero_trust(colspan, expected):
     "table,suffix",
     [
         # a rowspan leaves a placeholder in the continuation row
-        ("<tr><td rowspan='2'>x</td><td>a</td></tr><tr><td>b</td></tr>", "| x | a | \n|  | b |"),
+        ("<tr><td rowspan='2'>x</td><td>a</td></tr><tr><td>b</td></tr>", "| x | a | \n|---|---|\n|  | b |"),
         # rowspan + colspan registers every spanned column
         ("<tr><td rowspan='2' colspan='2'>big</td><td>c</td></tr><tr><td>x</td></tr>", "|  |  | x |"),
         # padding a short row consumes the rowspan, no stale placeholder below
@@ -3171,8 +3233,8 @@ def test_colspan_zero_trust(colspan, expected):
             "| d | e | f |",
         ),
         # an empty <tr> still consumes one row of a pending rowspan
-        ("<tr><td rowspan='3'>a</td><td>b</td></tr><tr></tr><tr><td>c</td></tr>", "| a | b | \n|  | c |"),
-        ("<tr><td rowspan='2'>a</td><td>b</td></tr><tr></tr><tr><td>c</td><td>d</td></tr>", "| a | b | \n| c | d |"),
+        ("<tr><td rowspan='3'>a</td><td>b</td></tr><tr></tr><tr><td>c</td></tr>", "| a | b | \n|---|---|\n|  | c |"),
+        ("<tr><td rowspan='2'>a</td><td>b</td></tr><tr></tr><tr><td>c</td><td>d</td></tr>", "| a | b | \n|---|---|\n| c | d |"),
     ],
     ids=["aligned", "colspan-combined", "decrement-on-padding", "through-empty-row", "ends-on-empty-row"],
 )
@@ -3184,16 +3246,16 @@ def test_table_rowspan(table, suffix):
 @pytest.mark.parametrize(
     "html,suffix",
     [
-        ("<table><tr><td></td><td>b</td></tr></table>", "|  | b |"),
-        ("<table><tr><td>a</td><td></td></tr></table>", "| a |  |"),
-        ("<table><tr><td>a</td><td>b</td></tr><tr><td></td><td></td></tr></table>", "| a | b |"),
+        ("<table><tr><td></td><td>b</td></tr></table>", "|  | b | \n|---|---|"),
+        ("<table><tr><td>a</td><td></td></tr></table>", "| a |  | \n|---|---|"),
+        ("<table><tr><td>a</td><td>b</td></tr><tr><td></td><td></td></tr></table>", "| a | b | \n|---|---|"),
         (
             "<table><tr><td>a</td><td>c</td></tr><tr><td></td><td></td></tr><tr><td>d</td><td>e</td></tr></table>",
-            "| a | c | \n| d | e |",
+            "| a | c | \n|---|---|\n| d | e |",
         ),
         (
             "<table><tr><td>a</td><td>c</td></tr><tr></tr><tr><td>d</td><td>e</td></tr></table>",
-            "| a | c | \n| d | e |",
+            "| a | c | \n|---|---|\n| d | e |",
         ),
     ],
     ids=["leading-empty", "trailing-empty", "all-empty-row-dropped", "empty-row-middle", "empty-tr"],
